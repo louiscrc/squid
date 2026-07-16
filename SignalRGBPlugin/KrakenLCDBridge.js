@@ -2,7 +2,7 @@ export function Name() {
   return 'Kraken LCD Bridge';
 }
 export function Version() {
-  return '0.0.1';
+  return '0.3.0-squid';
 }
 export function Type() {
   return 'network';
@@ -75,6 +75,24 @@ const parameters = {
     values: ['OFF', 'OVERLAY', 'MIX'],
     default: 'OVERLAY',
   },
+  lcdOrientation: {
+    property: 'lcdOrientation',
+    group: '',
+    label: 'LCD Orientation',
+    type: 'combobox',
+    values: ['0', '90', '180', '270'],
+    default: '90',
+  },
+  lcdOrientationDegrees: {
+    property: 'lcdOrientationDegrees',
+    group: '',
+    label: 'LCD Orientation Degrees',
+    step: 1,
+    type: 'number',
+    min: 0,
+    max: 359,
+    default: 90,
+  },
   overlayTransparency: {
     property: 'overlayTransparency',
     group: '',
@@ -145,6 +163,8 @@ export function ControllableParameters() {
     parameters.imageFormat,
     parameters.colorPalette,
     parameters.composition,
+    parameters.lcdOrientation,
+    parameters.lcdOrientationDegrees,
   ];
 }
 
@@ -155,8 +175,92 @@ discovery: readonly
 
 const BRIDGE_ADDRESS = 'http://127.0.0.1:30003';
 let nextCall = 0;
+let bridgePaused = false;
+
+function postOrientation(degrees) {
+  XmlHttp.Post(
+    BRIDGE_ADDRESS + '/orientation',
+    () => {},
+    {degrees: Number(degrees) % 360},
+    true
+  );
+}
+
+function pauseBridge() {
+  if (bridgePaused) {
+    return;
+  }
+  bridgePaused = true;
+  XmlHttp.Post(BRIDGE_ADDRESS + '/pause', () => {}, {}, false);
+}
+
+function resumeBridge(brightness) {
+  bridgePaused = false;
+  XmlHttp.Post(
+    BRIDGE_ADDRESS + '/resume',
+    () => {},
+    {brightness: brightness},
+    false
+  );
+}
+
+/** True when the canvas slice is effectively black (SignalRGB pause / blank). */
+function isEffectivelyDark(bytes) {
+  if (!bytes || bytes.length < 12) {
+    return false;
+  }
+  let sum = 0;
+  let n = 0;
+  const step = Math.max(4, Math.floor(bytes.length / 400));
+  for (let i = 0; i + 2 < bytes.length; i += step) {
+    sum += bytes[i] + bytes[i + 1] + bytes[i + 2];
+    n++;
+  }
+  // Average channel under ~2/255 → treat as blanked canvas.
+  return n > 0 && sum / n < 6;
+}
+
+/**
+ * Canvas Play/Pause forces device.color() to #000000 (SignalRGB docs).
+ * getImageBuffer() does NOT — it keeps streaming a dimmed live frame.
+ */
+function isCanvasColorBlack() {
+  const s = screenSize;
+  const points = [
+    [1, 1],
+    [(s / 2) | 0, (s / 2) | 0],
+    [s - 2, s - 2],
+    [(s / 4) | 0, ((3 * s) / 4) | 0],
+    [((3 * s) / 4) | 0, (s / 4) | 0],
+  ];
+  for (let i = 0; i < points.length; i++) {
+    const c = device.color(points[i][0], points[i][1]);
+    if (!c || c[0] > 3 || c[1] > 3 || c[2] > 3) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getLcdOrientationDegrees() {
+  const fine = device.getProperty('lcdOrientationDegrees')?.value;
+  if (fine !== undefined && fine !== null && fine !== '') {
+    return Number(fine) % 360;
+  }
+  const preset = device.getProperty('lcdOrientation')?.value;
+  return Number(preset ?? 90) % 360;
+}
+
 export function onfpsChanged() {
   nextCall = 0;
+}
+
+export function onlcdOrientationChanged() {
+  postOrientation(device.getProperty('lcdOrientation')?.value ?? 90);
+}
+
+export function onlcdOrientationDegreesChanged() {
+  postOrientation(device.getProperty('lcdOrientationDegrees')?.value ?? 90);
 }
 
 export function onscreenSizeChanged() {
@@ -164,12 +268,20 @@ export function onscreenSizeChanged() {
 }
 
 export function onBrightnessChanged() {
+  const brightness = device.getBrightness();
+  // SignalRGB pause / master dim often drives brightness to 0 while Render still runs.
+  if (brightness <= 0) {
+    pauseBridge();
+    return;
+  }
+  if (bridgePaused) {
+    resumeBridge(brightness);
+    return;
+  }
   XmlHttp.Post(
     BRIDGE_ADDRESS + '/brightness',
     () => {},
-    {
-      brightness: device.getBrightness(),
-    },
+    {brightness: brightness},
     false
   );
 }
@@ -216,11 +328,30 @@ export function Initialize() {
   } catch (error) {
     device.log('Could not retrieve device image');
   }
-  onBrightnessChanged();
+  // Resume streaming after pause / restart
+  const brightness = device.getBrightness();
+  if (brightness <= 0) {
+    pauseBridge();
+  } else {
+    resumeBridge(brightness);
+  }
+  onlcdOrientationDegreesChanged();
 }
 
 export function Render() {
   if (!controller.online || Date.now() < nextCall) {
+    return false;
+  }
+
+  const brightness = device.getBrightness();
+  if (brightness <= 0) {
+    pauseBridge();
+    return false;
+  }
+
+  // Pause button: color() goes black, but getImageBuffer stays dimmed/live.
+  if (isCanvasColorBlack()) {
+    pauseBridge();
     return false;
   }
 
@@ -231,9 +362,20 @@ export function Render() {
     format: imageFormat,
   });
 
+  // Extra guard if the buffer itself is fully black.
+  if (isEffectivelyDark(RGBData)) {
+    pauseBridge();
+    return false;
+  }
+
+  if (bridgePaused) {
+    resumeBridge(brightness);
+  }
+
   const data = {
     raw: XmlHttp.Bytes2Base64(RGBData),
     rotation: device.rotation,
+    lcdOrientation: getLcdOrientationDegrees(),
 
     colorPalette: device.getProperty('colorPalette')?.value ?? 'WEB',
     composition: device.getProperty('composition').value,
@@ -254,7 +396,9 @@ export function Render() {
   XmlHttp.Post(BRIDGE_ADDRESS + '/frame', () => {}, data, async);
 }
 
-export function Shutdown(suspend) {}
+export function Shutdown(suspend) {
+  pauseBridge();
+}
 
 export function DiscoveryService() {
   this.IconUrl = `${BRIDGE_ADDRESS}/images/plugin.png`;

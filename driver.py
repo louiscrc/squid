@@ -2,6 +2,7 @@ from io import BytesIO
 import time
 import hid
 import math
+from threading import Lock
 from winusbcdc import WinUsbPy
 from typing import Tuple
 from collections import namedtuple
@@ -42,6 +43,7 @@ class RENDERING_MODE(str, Enum):
 
 
 class DISPLAY_MODE(IntEnum):
+    OFF = 0  # firmware blank / panel off (same as krakenctl -b)
     LIQUID = 2
     BUCKET = 4
     FAST_BUCKET = 5
@@ -149,6 +151,9 @@ class KrakenLCD:
         maskCanvas = ImageDraw.Draw(self.mask)
         maskCanvas.ellipse([(0, 0), self.resolution], fill=(255, 255, 255, 255))
 
+        # Serialize HID + bulk; pause must not interleave with an in-flight frame.
+        self.usb_lock = Lock()
+
         self.write([0x36, 0x3])
         self.setBrightness(100)
 
@@ -231,11 +236,19 @@ class KrakenLCD:
 
     @timing
     def getStats(self):
-        self.write([0x74, 0x1])
-        return self.readUntil({b"\x75\x01": self.parseStats})
+        with self.usb_lock:
+            self.write([0x74, 0x1])
+            return self.readUntil({b"\x75\x01": self.parseStats})
 
-    @debounce(0.5)
-    def setBrightness(self, brightness: int) -> None:
+    def setBrightnessImmediate(
+        self, brightness: int, orientation: int = 3
+    ) -> None:
+        with self.usb_lock:
+            self._setBrightnessUnlocked(brightness, orientation)
+
+    def _setBrightnessUnlocked(
+        self, brightness: int, orientation: int = 3
+    ) -> None:
         self.write(
             [
                 0x30,
@@ -245,13 +258,56 @@ class KrakenLCD:
                 0x0,
                 0x0,
                 0x1,
-                0x3,  # default orientation,
+                max(0, min(3, int(orientation))),
             ]
         )
 
+    def blankPanel(self, orientation: int = 3) -> None:
+        """Best-effort full LCD off: black pixels + backlight 0 + mode OFF."""
+        black = None
+        try:
+            # Encode outside the USB lock (can be slow).
+            img = Image.new("RGBA", self.resolution, (0, 0, 0, 255))
+            black = self.imageToFrame(img, adaptive=False)
+        except Exception:
+            black = None
+        with self.usb_lock:
+            self._setBrightnessUnlocked(0, orientation)
+            if black and self.streamReady:
+                try:
+                    self.clear()
+                    self.writeQ565(black)
+                except Exception:
+                    pass
+            # Some firmwares treat the 3rd byte as an enable flag.
+            self.write(
+                [
+                    0x30,
+                    0x02,
+                    0x00,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    max(0, min(3, int(orientation))),
+                ]
+            )
+            self._setLcdModeUnlocked(DISPLAY_MODE.OFF)
+
+    @debounce(0.5)
+    def setBrightness(self, brightness: int) -> None:
+        self.setBrightnessImmediate(brightness)
+
     @timing
     def setLcdMode(self, mode: DISPLAY_MODE, bucket=0) -> bool:
+        with self.usb_lock:
+            return self._setLcdModeUnlocked(mode, bucket)
+
+    def _setLcdModeUnlocked(self, mode: DISPLAY_MODE, bucket=0) -> bool:
         self.write([0x38, 0x1, mode, bucket])
+        # OFF/blank often has no useful ack; don't stall the bridge waiting.
+        if mode == DISPLAY_MODE.OFF:
+            return True
         return self.readUntil({b"\x39\x01": self.parseStandardResult})
 
     @timing
@@ -393,32 +449,37 @@ class KrakenLCD:
     def writeFrame(self, frame: bytes):
         if not self.streamReady:
             return False
-        self.clear()
-        result = False
-        if self.renderingMode == RENDERING_MODE.RGBA:
-            result = self.writeRGBA(frame, self.nextFrameBucket) and self.setLcdMode(
-                DISPLAY_MODE.BUCKET, self.nextFrameBucket
-            )
-        if self.renderingMode == RENDERING_MODE.GIF:
-            startAddress = list(
-                math.ceil(
-                    self.nextFrameBucket * ((self.maxRGBABucketSize) / 1024 + 1)
-                ).to_bytes(2, "little")
-            )
-
-            result = (
-                (
-                    self.deleteBucket(self.nextFrameBucket)
-                    or self.deleteBucket(self.nextFrameBucket)
+        with self.usb_lock:
+            self.clear()
+            result = False
+            if self.renderingMode == RENDERING_MODE.RGBA:
+                result = self.writeRGBA(
+                    frame, self.nextFrameBucket
+                ) and self._setLcdModeUnlocked(
+                    DISPLAY_MODE.BUCKET, self.nextFrameBucket
                 )
-                and self.createBucket(self.nextFrameBucket, startAddress)
-                and self.writeGIF(frame, self.nextFrameBucket)
-                and self.setLcdMode(DISPLAY_MODE.BUCKET, self.nextFrameBucket)
-            )
-        if self.renderingMode == RENDERING_MODE.Q565:
-            result = self.writeQ565(frame)
-        self.nextFrameBucket = (self.nextFrameBucket + 1) % self.bucketsToUse
-        return result
+            if self.renderingMode == RENDERING_MODE.GIF:
+                startAddress = list(
+                    math.ceil(
+                        self.nextFrameBucket * ((self.maxRGBABucketSize) / 1024 + 1)
+                    ).to_bytes(2, "little")
+                )
+
+                result = (
+                    (
+                        self.deleteBucket(self.nextFrameBucket)
+                        or self.deleteBucket(self.nextFrameBucket)
+                    )
+                    and self.createBucket(self.nextFrameBucket, startAddress)
+                    and self.writeGIF(frame, self.nextFrameBucket)
+                    and self._setLcdModeUnlocked(
+                        DISPLAY_MODE.BUCKET, self.nextFrameBucket
+                    )
+                )
+            if self.renderingMode == RENDERING_MODE.Q565:
+                result = self.writeQ565(frame)
+            self.nextFrameBucket = (self.nextFrameBucket + 1) % self.bucketsToUse
+            return result
 
     @timing
     def imageToFrame(self, img: Image.Image, adaptive=False) -> bytes:
