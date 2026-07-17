@@ -1,0 +1,41 @@
+{
+  "version": 9,
+  "arcs": {
+    "enabled": true,
+    "colors": ["#3278ff", "#ffffff", "#ff3232"],
+    "left": {
+      "metric": "cpu_temp_c",
+      "min": 20,
+      "max": 100,
+      "x": 70,
+      "y": 320,
+      "fontSize": 30,
+      "labelFontSize": 16,
+      "label": ""
+    },
+    "right": {
+      "metric": "gpu_temp_c",
+      "min": 20,
+      "max": 90,
+      "x": 570,
+      "y": 320,
+      "fontSize": 30,
+      "labelFontSize": 16,
+      "label": ""
+    }
+  },
+  "tempArcs": true,
+  "backgroundColor": "#000000",
+  "textColor": "#ffffff",
+  "labelColor": "#9a9a9a",
+  "widgets": [
+    {"id": "w_liquid_c", "metric": "liquid_c", "label": "LIQUID", "x": 320, "y": 94, "fontSize": 82, "labelFontSize": 26, "color": "#ffffff", "align": "center", "format": "temp"},
+    {"id": "w_fps", "metric": "fps", "label": "FPS", "x": 320, "y": 282, "fontSize": 140, "labelFontSize": 30, "color": "#ffffff", "align": "center", "format": "int"},
+    {"id": "w_cpu_usage_pct", "metric": "cpu_usage_pct", "label": "CPU", "x": 166, "y": 177, "fontSize": 72, "labelFontSize": 24, "color": "#ffffff", "align": "center", "format": "pct"},
+    {"id": "w_gpu_usage_pct", "metric": "gpu_usage_pct", "label": "GPU", "x": 474, "y": 177, "fontSize": 72, "labelFontSize": 24, "color": "#ffffff", "align": "center", "format": "pct"},
+    {"id": "w_ram", "metric": "ram", "label": "RAM", "x": 185, "y": 378, "fontSize": 60, "labelFontSize": 22, "color": "#ffffff", "align": "center", "format": "mem"},
+    {"id": "w_vram", "metric": "vram", "label": "VRAM", "x": 455, "y": 378, "fontSize": 60, "labelFontSize": 22, "color": "#ffffff", "align": "center", "format": "mem"},
+    {"id": "w_cpu_power_w", "metric": "cpu_power_w", "label": "CPU PWR", "x": 230, "y": 491, "fontSize": 56, "labelFontSize": 22, "color": "#ffffff", "align": "center", "format": "power"},
+    {"id": "w_gpu_power_w", "metric": "gpu_power_w", "label": "GPU PWR", "x": 410, "y": 491, "fontSize": 56, "labelFontSize": 22, "color": "#ffffff", "align": "center", "format": "power"}
+  ]
+}

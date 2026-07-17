@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kraken Overlay Editor</title>
+  <link rel="stylesheet" href="/overlay/app.css" />
+  <style>
+    @font-face {
+      font-family: 'RubikOverlay';
+      src: url('/fonts/Rubik-Bold.ttf') format('truetype');
+      font-weight: 700;
+      font-style: normal;
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <h1>Kraken overlay</h1>
+    <div class="status" id="status">Connecting…</div>
+    <div class="actions">
+      <label class="inline">BG <input type="color" id="bgColor" value="#000000" /><label class="check tiny"><input type="checkbox" id="bgTransparent" /> transparent</label></label>
+      <label class="inline">Text <input type="color" id="textColor" value="#ffffff" /><label class="check tiny"><input type="checkbox" id="textTransparent" /> transparent</label></label>
+      <button type="button" id="btnSave">Save</button>
+      <button type="button" id="btnReset" class="secondary">Reset default</button>
+    </div>
+  </header>
+  <main>
+    <aside class="palette">
+      <h2>Metrics</h2>
+      <p class="hint">Click to add. Each metric once (not with arcs).</p>
+      <ul id="catalog"></ul>
+      <h2>Rim arcs</h2>
+      <label class="check"><input type="checkbox" id="arcsEnabled" /> Show gradients</label>
+      <div id="arcsForm">
+        <label>Cool <input type="color" id="arcC0" value="#3278ff" /></label>
+        <label>Mid <input type="color" id="arcC1" value="#ffffff" /></label>
+        <label>Hot <input type="color" id="arcC2" value="#ff3232" /></label>
+        <label>Left
+          <select id="arcLeftMetric"></select>
+        </label>
+        <label>Left min <input type="number" id="arcLeftMin" step="1" /></label>
+        <label>Left max <input type="number" id="arcLeftMax" step="1" /></label>
+        <label>Right
+          <select id="arcRightMetric"></select>
+        </label>
+        <label>Right min <input type="number" id="arcRightMin" step="1" /></label>
+        <label>Right max <input type="number" id="arcRightMax" step="1" /></label>
+        <p class="hint">Click a side readout on the dial to move / resize it.</p>
+      </div>
+    </aside>
+    <section class="stage-wrap">
+      <div class="stage" id="stage">
+        <canvas id="canvas" width="640" height="640"></canvas>
+      </div>
+    </section>
+    <aside class="props" id="props">
+      <h2 id="propsTitle">Widget</h2>
+      <p class="empty" id="noSelection">Select a widget or arc readout on the dial.</p>
+      <div id="propForm" class="hidden">
+        <label>Label <input type="text" id="propLabel" /></label>
+        <label id="propMetricWrap">Metric
+          <select id="propMetric"></select>
+        </label>
+        <label>Value size <input type="number" id="propFont" min="8" max="200" /></label>
+        <label>Label size <input type="number" id="propLabelFont" min="8" max="80" /></label>
+        <label class="inline hidden" id="propXY">X <input type="number" id="propX" min="20" max="620" /> Y <input type="number" id="propY" min="20" max="620" /></label>
+        <button type="button" id="btnDelete" class="danger">Remove</button>
+      </div>
+    </aside>
+  </main>
+  <script src="/overlay/app.js"></script>
+</body>
+</html>

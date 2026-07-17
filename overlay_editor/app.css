@@ -1,0 +1,159 @@
+:root {
+  --bg: #12141a;
+  --panel: #1c2030;
+  --text: #e8ecf4;
+  --muted: #8b93a7;
+  --accent: #3d8bfd;
+  --danger: #e35d6a;
+  --ring: #2a3144;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--ring);
+  background: var(--panel);
+}
+.top h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.status { color: var(--muted); flex: 1; }
+.actions { display: flex; gap: 8px; align-items: center; }
+.actions .inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.actions .inline input[type="color"] {
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--ring);
+  background: transparent;
+  cursor: pointer;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+button.secondary { background: #3a4158; }
+button.danger { background: var(--danger); width: 100%; margin-top: 12px; }
+button:hover { filter: brightness(1.08); }
+
+main {
+  display: grid;
+  grid-template-columns: 220px 1fr 240px;
+  height: calc(100% - 57px);
+}
+
+aside {
+  background: var(--panel);
+  border-right: 1px solid var(--ring);
+  padding: 16px;
+  overflow: auto;
+}
+aside.props { border-right: 0; border-left: 1px solid var(--ring); }
+aside h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+.check input { width: auto; margin: 0; }
+.check.tiny {
+  display: inline-flex;
+  margin: 0 0 0 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+#arcsForm label { margin-bottom: 8px; }
+#catalog li.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+#catalog { list-style: none; margin: 0; padding: 0; }
+#catalog li {
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  background: #151925;
+  border: 1px solid var(--ring);
+  border-radius: 8px;
+  cursor: pointer;
+}
+#catalog li:hover { border-color: var(--accent); }
+#catalog .val { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+.stage-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at center, #1a1f2e 0%, var(--bg) 70%);
+}
+.stage {
+  width: min(92vmin, 640px);
+  height: min(92vmin, 640px);
+  position: relative;
+}
+#canvas {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--ring), 0 20px 60px rgba(0,0,0,0.45);
+  cursor: default;
+  background: #0a0c12;
+}
+
+label {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+input, select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--ring);
+  background: #12151f;
+  color: var(--text);
+}
+.hidden { display: none !important; }
+.empty { color: var(--muted); }

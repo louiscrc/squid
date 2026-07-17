@@ -51,22 +51,6 @@ const parameters = {
     max: '80',
     default: '40',
   },
-  imageFormat: {
-    property: 'imageFormat',
-    group: '',
-    label: 'Format',
-    type: 'combobox',
-    values: ['PNG', 'JPEG'],
-    default: 'PNG',
-  },
-  colorPalette: {
-    property: 'colorPalette',
-    group: '',
-    label: 'Color Palette',
-    type: 'combobox',
-    values: ['WEB', 'ADAPTIVE'],
-    default: 'WEB',
-  },
   composition: {
     property: 'composition',
     group: '',
@@ -103,65 +87,18 @@ const parameters = {
     max: 100,
     default: 0,
   },
-  spinner: {
-    property: 'spinner',
-    group: '',
-    label: 'Spinner',
-    type: 'combobox',
-    values: ['OFF', 'STATIC', 'CPU', 'PUMP'],
-    default: 'STATIC',
-  },
   textOverlay: {
     property: 'textOverlay',
     group: '',
-    label: 'Text overlay',
+    label: 'Use overlay layout',
     type: 'boolean',
     default: true,
-  },
-  titleText: {
-    property: 'titleText',
-    group: '',
-    label: 'titleText',
-    type: 'textfield',
-    default: 'SignalRGB',
-  },
-  titleFontSize: {
-    property: 'titleFontSize',
-    group: '',
-    label: 'titleFontSize',
-    step: 1,
-    type: 'number',
-    min: 10,
-    max: 200,
-    default: 40,
-  },
-  sensorFontSize: {
-    property: 'sensorFontSize',
-    group: '',
-    label: 'sensorFontSize',
-    step: 1,
-    type: 'number',
-    min: 10,
-    max: 320,
-    default: 160,
-  },
-  sensorLabelFontSize: {
-    property: 'sensorLabelFontSize',
-    group: '',
-    label: 'sensorLabelFontSize',
-    step: 1,
-    type: 'number',
-    min: 10,
-    max: 200,
-    default: 40,
   },
 };
 export function ControllableParameters() {
   return [
     parameters.fps,
     parameters.screenSize,
-    parameters.imageFormat,
-    parameters.colorPalette,
     parameters.composition,
     parameters.lcdOrientation,
     parameters.lcdOrientationDegrees,
@@ -289,39 +226,25 @@ export function onBrightnessChanged() {
 export function oncompositionChanged() {
   if (device.getProperty('composition').value === 'OFF') {
     device.removeProperty('overlayTransparency');
-    device.removeProperty('spinner');
     device.removeProperty('textOverlay');
   } else {
     device.addProperty(parameters.overlayTransparency);
-    device.addProperty(parameters.spinner);
     device.addProperty(parameters.textOverlay);
   }
-
-  ontextOverlayChanged();
+  // Drop legacy props if still present from older plugin versions
+  device.removeProperty('spinner');
+  device.removeProperty('imageFormat');
+  device.removeProperty('colorPalette');
 }
 
 export function ontextOverlayChanged() {
-  if (device.getProperty('textOverlay')?.value) {
-    device.addProperty(parameters.titleText);
-    device.addProperty(parameters.titleFontSize);
-    device.addProperty(parameters.sensorFontSize);
-    device.addProperty(parameters.sensorLabelFontSize);
-  } else {
-    device.removeProperty('titleText');
-    device.removeProperty('titleFontSize');
-    device.removeProperty('sensorFontSize');
-    device.removeProperty('sensorLabelFontSize');
-  }
+  // Layout is edited at http://127.0.0.1:30003/overlay — no per-field SignalRGB props.
 }
 
 export function Initialize() {
   device.setName(controller.name);
   onscreenSizeChanged();
   oncompositionChanged();
-  if (controller.renderingMode === 'RGBA') {
-    // RGBA mode does not use a color palette
-    device.removeProperty('colorPalette');
-  }
   try {
     const image = XmlHttp.downloadImage(device.image);
     device.setImageFromBase64(image);
@@ -350,6 +273,7 @@ export function Render() {
   }
 
   // Pause button: color() goes black, but getImageBuffer stays dimmed/live.
+  // (Keep this — without it the LCD never true-blanks on SignalRGB pause.)
   if (isCanvasColorBlack()) {
     pauseBridge();
     return false;
@@ -359,14 +283,11 @@ export function Render() {
     flipH: false,
     outputWidth: screenSize,
     outputHeight: screenSize,
-    format: imageFormat,
+    format: 'PNG',
   });
 
-  // Extra guard if the buffer itself is fully black.
-  if (isEffectivelyDark(RGBData)) {
-    pauseBridge();
-    return false;
-  }
+  // Do NOT use isEffectivelyDark(RGBData): fullscreen games often darken the
+  // capture buffer and that falsely blanked the Kraken.
 
   if (bridgePaused) {
     resumeBridge(brightness);
@@ -376,16 +297,9 @@ export function Render() {
     raw: XmlHttp.Bytes2Base64(RGBData),
     rotation: device.rotation,
     lcdOrientation: getLcdOrientationDegrees(),
-
-    colorPalette: device.getProperty('colorPalette')?.value ?? 'WEB',
     composition: device.getProperty('composition').value,
     overlayTransparency: device.getProperty('overlayTransparency')?.value ?? 0,
-    spinner: device.getProperty('spinner')?.value ?? false,
     textOverlay: device.getProperty('textOverlay')?.value ?? false,
-    titleText: device.getProperty('titleText')?.value,
-    titleFontSize: device.getProperty('titleFontSize')?.value,
-    sensorFontSize: device.getProperty('sensorFontSize')?.value,
-    sensorLabelFontSize: device.getProperty('sensorLabelFontSize')?.value,
   };
   const fpsConfig = device.getProperty('fps')?.value;
   if (Number(fpsConfig)) {
