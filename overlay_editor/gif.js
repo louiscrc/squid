@@ -1,14 +1,10 @@
-import { GiphyFetch } from 'https://cdn.jsdelivr.net/npm/@giphy/js-fetch-api@5.6.0/+esm';
-
-const GIPHY_API_KEY = '0YDmt4NVuQwNvF7UqKlR3k2pfBs11D5w';
-const gf = new GiphyFetch(GIPHY_API_KEY);
-
 const dial = document.getElementById('dial');
 const previewGif = document.getElementById('previewGif');
 const status = document.getElementById('status');
 const fileInput = document.getElementById('file');
 const queryEl = document.getElementById('query');
 const resultsEl = document.getElementById('results');
+const giphyKeyEl = document.getElementById('giphyKey');
 const zoomEl = document.getElementById('zoom');
 const panXEl = document.getElementById('panX');
 const panYEl = document.getElementById('panY');
@@ -74,6 +70,10 @@ function bytesToBase64(bytes) {
 }
 
 function pickUrls(gif) {
+  // Bridge /gif/search returns {url, preview, label}; SDK shape also supported.
+  if (gif.url || gif.preview) {
+    return { preview: gif.preview || gif.url, full: gif.url || gif.preview };
+  }
   const images = gif.images || {};
   const preview =
     images.fixed_width?.url ||
@@ -134,13 +134,13 @@ function renderResults(gifs) {
     }
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.title = gif.title || gif.slug || 'giphy';
+    btn.title = gif.label || gif.title || gif.slug || 'giphy';
     if (full === selectedUrl) {
       btn.classList.add('selected');
     }
     const img = document.createElement('img');
     img.loading = 'lazy';
-    img.alt = gif.title || '';
+    img.alt = gif.label || gif.title || '';
     img.src = preview || full;
     btn.appendChild(img);
     btn.addEventListener('click', async () => {
@@ -149,7 +149,7 @@ function renderResults(gifs) {
         el.classList.toggle('selected', el === btn);
       }
       try {
-        await loadFromProxyUrl(full, gif.title || 'Giphy', preview || full);
+        await loadFromProxyUrl(full, gif.label || gif.title || 'Giphy', preview || full);
       } catch (e) {
         setStatus('Fetch failed: ' + e.message);
       }
@@ -163,10 +163,23 @@ async function runSearch() {
   setStatus(q ? 'Searching Giphy…' : 'Loading trending…');
   btnSearch.disabled = true;
   try {
-    const res = q
-      ? await gf.search(q, { limit: 24, sort: 'relevant', rating: 'pg-13' })
-      : await gf.trending({ limit: 24, rating: 'pg-13' });
-    const gifs = res.data || [];
+    const key = (giphyKeyEl && giphyKeyEl.value.trim()) || '';
+    if (key) {
+      await fetch('/gif/key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+    }
+    const url = '/gif/search?limit=24&q=' + encodeURIComponent(q);
+    const headers = {};
+    if (key) headers['X-Giphy-Key'] = key;
+    const res = await fetch(url, { headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.error || res.statusText || 'search failed');
+    }
+    const gifs = data.results || [];
     renderResults(gifs);
     setStatus(q ? `${gifs.length} results for “${q}”` : `${gifs.length} trending`);
   } catch (e) {

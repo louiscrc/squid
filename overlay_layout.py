@@ -384,7 +384,7 @@ def format_metric_parts(
     fmt: str = "auto",
     show_total: bool = True,
 ) -> List[MetricPart]:
-    """Split value into number + smaller unit/suffix (° stays same size as number)."""
+    """Split value into number + smaller unit/suffix (unit role = grey unit color)."""
     if metric == "vram":
         return _parts_mem(
             metrics.get("vram_used"),
@@ -414,7 +414,7 @@ def format_metric_parts(
     if fmt == "temp":
         if v is None:
             return _parts_missing()
-        return [("{:.0f}".format(v), "num"), ("\u00b0", "num")]
+        return [("{:.0f}".format(v), "num"), ("\u00b0", "unit")]
     if fmt == "pct":
         if v is None:
             return _parts_missing()

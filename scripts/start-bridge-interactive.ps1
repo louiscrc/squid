@@ -1,30 +1,30 @@
-# Start signalrgb.py on the interactive console session (not Session 0 / SSH).
-# RTSS shared memory is session-local — Session 0 cannot see hooked game FPS.
+# Start SignalRGBLCDBridge on the interactive desktop session (not Session 0 / SSH).
+# RTSS / MAHM framerate shared memory is session-local.
 $ErrorActionPreference = "Stop"
-$root = "C:\Users\louis\Projects\squid"
-$py = Join-Path $root ".venv\Scripts\python.exe"
-$script = Join-Path $root "signalrgb.py"
+$installDir = Join-Path $env:LOCALAPPDATA "SignalRGBLCDBridge"
+$exe = Join-Path $installDir "SignalRGBLCDBridge.exe"
 $task = "SquidLCDBridge"
 
-Get-Process python, pythonw -EA SilentlyContinue | Where-Object {
-  $_.Path -like "*squid*" -or $_.Path -like "*Projects\squid*"
-} | Stop-Process -Force -EA SilentlyContinue
-
-# Also stop any python hosting signalrgb from this venv
-Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -EA SilentlyContinue |
-  Where-Object { $_.CommandLine -match 'signalrgb' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
-
+Get-Process SignalRGBLCDBridge, signalrgb -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 Start-Sleep -Milliseconds 500
 
-$action = New-ScheduledTaskAction -Execute $py -Argument "`"$script`"" -WorkingDirectory $root
+if (-not (Test-Path $exe)) {
+  throw "Missing $exe - copy SignalRGBLCDBridge.exe into $installDir first."
+}
+
+$action = New-ScheduledTaskAction -Execute $exe -WorkingDirectory $installDir
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -ExecutionTimeLimit ([TimeSpan]::Zero) `
+  -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $task -Action $action -Principal $principal `
+  -Trigger $trigger -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $task
 Start-Sleep 2
 
-Get-Process python, pythonw -EA SilentlyContinue |
-  Select-Object Name, Id, SessionId, Path |
-  Format-Table -Auto
-Write-Host "Bridge started via scheduled task '$task' (should be SessionId=1)."
+Get-CimInstance Win32_Process | Where-Object { $_.Name -match "SignalRGBLCDBridge" } |
+  Select-Object Name, ProcessId, SessionId, ExecutablePath | Format-Table -Auto
+Write-Host "Bridge started via '$task' (SessionId should be 1)."

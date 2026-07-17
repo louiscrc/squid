@@ -14,7 +14,7 @@ import sys
 import os
 import webbrowser
 from urllib.parse import urlparse, unquote, parse_qs, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 from workers import FrameWriter
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import base64
@@ -187,6 +187,51 @@ def get_metrics_snapshot():
         return dict(metrics)
 
 
+def _metrics_fingerprint(snap: dict) -> tuple:
+    """Coarse value tuple so overlay cache invalidates when sensors move."""
+
+    def r(v):
+        if v is None:
+            return None
+        try:
+            return round(float(v), 1)
+        except Exception:
+            return v
+
+    keys = (
+        "liquid_c",
+        "fps",
+        "cpu_temp_c",
+        "gpu_temp_c",
+        "cpu_usage_pct",
+        "gpu_usage_pct",
+        "cpu_power_w",
+        "gpu_power_w",
+        "cpu_power_max_w",
+        "gpu_power_max_w",
+        "vram_used",
+        "vram_total",
+        "ram_used",
+        "ram_total",
+        "pump",
+        "afterburner",
+    )
+    return tuple(r(snap.get(k)) for k in keys)
+
+
+def _classic_overlay_fingerprint(data: dict) -> tuple:
+    return (
+        str(data.get("spinner") or "OFF").upper(),
+        str(data.get("overlayMetric") or "Liquid"),
+        str(data.get("overlayBgMode") or "Transparent"),
+        str(data.get("overlayBgColor") or "#000000"),
+        str(data.get("titleText") or ""),
+        int(data.get("titleFontSize") or 40),
+        int(data.get("sensorFontSize") or 160),
+        int(data.get("sensorLabelFontSize") or 40),
+    )
+
+
 def get_overlay_layout(force=False):
     path = overlay_layout.layout_path()
     try:
@@ -261,7 +306,17 @@ def fetch_gif_url(url: str, timeout: float = 20.0) -> bytes:
             "Accept": "image/gif,image/*,*/*",
         },
     )
-    with urlopen(req, timeout=timeout) as resp:
+
+    class _NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not _gif_proxy_allowed(newurl):
+                raise ValueError("redirect host not allowed")
+            return HTTPRedirectHandler.redirect_request(
+                self, req, fp, code, msg, headers, newurl
+            )
+
+    opener = build_opener(_NoRedirect())
+    with opener.open(req, timeout=timeout) as resp:
         data = resp.read()
     if not data:
         raise ValueError("empty response")
@@ -750,13 +805,12 @@ def do_shutdown_color(color: str = "#000000"):
         stream_state["paused"] = True
         orient = stream_state["lcd_orientation_degrees"] // 90
         stream_state["last_frame_at"] = time.time()
+        brightness = stream_state["saved_brightness"] or 100
     try:
         img = Image.new("RGBA", lcd.resolution, (*rgb, 255))
         frame = lcd.imageToFrame(img, adaptive=False)
         lcd.writeFrame(frame)
-        lcd.setBrightnessImmediate(
-            stream_state["saved_brightness"] or 100, orientation=orient
-        )
+        lcd.setBrightnessImmediate(brightness, orientation=orient)
         print("LCD shutdown color {}".format(c), flush=True)
     except Exception as e:
         print("shutdown color failed: {}".format(e), flush=True)
@@ -1114,7 +1168,7 @@ class RawProducer(Thread):
         class ThreadingSimpleServer(ThreadingMixIn, HTTPServer):
             pass
 
-        server_address = ("", PORT)
+        server_address = ("127.0.0.1", PORT)
         server = ThreadingSimpleServer(server_address, Handler)
         server.serve_forever()
 
@@ -1136,6 +1190,9 @@ class OverlayProducer(Thread):
             "fontSensorLabel": ImageFont.truetype(FONT_FILE, 10),
             "fontDegree": ImageFont.truetype(FONT_FILE, 10 // 3),
         }
+        # Cached final RGBA overlay (MONITOR / static OVERLAY)
+        self._overlay_cache_img = None
+        self._overlay_cache_key = None
 
     def updateFonts(self, data):
         if data["titleFontSize"] != self.fonts["titleFontSize"]:
@@ -1160,24 +1217,57 @@ class OverlayProducer(Thread):
     def run(self):
         debug("Overlay converter worker started")
         while True:
-            if self.frameBuffer.full():
-                time.sleep(0.001)
-                continue
-
-            self.addOverlay(*self.rawBuffer.get())
+            try:
+                if self.frameBuffer.full():
+                    time.sleep(0.001)
+                    continue
+                self.addOverlay(*self.rawBuffer.get())
+            except Exception as e:
+                # Never kill the worker on a bad frame — LCD would freeze.
+                print("addOverlay error: {}".format(e), flush=True)
+                time.sleep(0.01)
 
     @timing
     def parseImage(self, data):
-        raw = base64.b64decode(data["raw"])
+        b64 = data.get("raw")
+        if not b64:
+            raise ValueError("missing frame raw")
+        raw = base64.b64decode(b64)
+        img = Image.open(BytesIO(raw)).convert("RGBA")
+        target = lcd.resolution
+        if img.size == (target.width, target.height):
+            return img
+        return img.resize(target, Image.Resampling.BILINEAR)
 
-        return (
-            Image.open(BytesIO(raw))
-            .convert("RGBA")
-            .resize(
-                lcd.resolution,
-                Image.Resampling.LANCZOS,
-            )
-        )
+    def _overlay_cacheable(self, mode: str, data: dict) -> bool:
+        if mode in ("MONITOR", "EDITOR", "CUSTOM"):
+            return True
+        if mode != "OVERLAY":
+            return False
+        # Animated spinner must redraw every frame
+        spinner = str(data.get("spinner") or "OFF").upper()
+        return spinner not in ("CPU", "PUMP")
+
+    def _make_overlay_cache_key(self, mode: str, data: dict) -> tuple:
+        snap = get_metrics_snapshot()
+        layout_mtime = None
+        with layout_lock:
+            layout_mtime = _layout_cache.get("mtime")
+        key = (mode, layout_mtime, _metrics_fingerprint(snap))
+        if mode == "OVERLAY":
+            key = key + _classic_overlay_fingerprint(data)
+        return key
+
+    def _get_cached_overlay(self, data, mode: str):
+        if not self._overlay_cacheable(mode, data):
+            return self.renderOverlay(data)
+        key = self._make_overlay_cache_key(mode, data)
+        if self._overlay_cache_img is not None and self._overlay_cache_key == key:
+            return self._overlay_cache_img
+        overlay = self.renderOverlay(data)
+        self._overlay_cache_img = overlay
+        self._overlay_cache_key = key
+        return overlay
 
     @timing
     def renderOverlay(self, data):
@@ -1188,6 +1278,95 @@ class OverlayProducer(Thread):
             return self._render_classic_overlay(data)
         return Image.new("RGBA", data["size"], (0, 0, 0, 0))
 
+    def _pil_fallback_frame(self, data, img, overlay, degrees: int):
+        mode = str(data.get("composition") or "OFF").upper()
+        if mode in ("OVERLAY", "MONITOR", "EDITOR", "CUSTOM") and overlay is not None:
+            img = Image.alpha_composite(img, overlay)
+        if degrees % 360:
+            img = img.rotate(-(degrees % 360), expand=False, fillcolor=(0, 0, 0, 255))
+        return lcd.imageToFrame(img, adaptive=False)
+
+    def _rust_compose_frame(self, img, overlay, degrees: int):
+        """Fast path: blend + ortho rotate + mask + Q565 in one Rust call."""
+        rotate_ccw = (-(degrees % 360)) % 360
+        if rotate_ccw % 90 != 0:
+            return None
+        try:
+            import q565_rust
+        except Exception as e:
+            if not getattr(OverlayProducer, "_rust_import_warned", False):
+                OverlayProducer._rust_import_warned = True
+                print("q565_rust unavailable, using PIL: {}".format(e), flush=True)
+            return None
+        if not hasattr(q565_rust, "py_compose_encode"):
+            if not getattr(OverlayProducer, "_rust_api_warned", False):
+                OverlayProducer._rust_api_warned = True
+                print("q565_rust missing py_compose_encode, using PIL", flush=True)
+            return None
+        w, h = img.size
+        canvas = img.tobytes("raw", "RGBA")
+        if overlay is not None:
+            if overlay.size != img.size:
+                overlay = overlay.resize(img.size, Image.Resampling.BILINEAR)
+            if overlay.mode != "RGBA":
+                overlay = overlay.convert("RGBA")
+            ov = overlay.tobytes("raw", "RGBA")
+        else:
+            ov = b""
+        try:
+            return q565_rust.py_compose_encode(w, h, canvas, ov, rotate_ccw)
+        except Exception as e:
+            if not getattr(OverlayProducer, "_rust_encode_warned", False):
+                OverlayProducer._rust_encode_warned = True
+                print("py_compose_encode failed, using PIL: {}".format(e), flush=True)
+            return None
+
+    @timing
+    def compose(self, data, img, overlay):
+        mode = str(data.get("composition") or "OFF").upper()
+        if mode in ("OVERLAY", "MONITOR", "EDITOR", "CUSTOM"):
+            return Image.alpha_composite(img, overlay)
+        return img
+
+    @timing
+    def addOverlay(self, postData, rawTime):
+        startTime = time.time()
+
+        data = json.loads(postData.decode("utf-8"))
+        data["size"] = lcd.resolution
+        img = self.parseImage(data)
+        mode = str(data.get("composition") or "OFF").upper()
+
+        overlay = None
+        if mode in ("OVERLAY", "MONITOR", "EDITOR", "CUSTOM"):
+            overlay = self._get_cached_overlay(data, mode)
+
+        if data.get("lcdOrientation") is not None:
+            degrees = int(data["lcdOrientation"]) % 360
+            with stream_lock:
+                stream_state["lcd_orientation_degrees"] = degrees
+        else:
+            with stream_lock:
+                degrees = stream_state["lcd_orientation_degrees"]
+
+        encoded = self._rust_compose_frame(img, overlay, degrees)
+        if encoded is None:
+            encoded = self._pil_fallback_frame(data, img, overlay, degrees)
+
+        overlayTime = time.time() - startTime
+
+        frame = (encoded, rawTime, overlayTime)
+        try:
+            self.frameBuffer.put_nowait(frame)
+        except queue.Full:
+            try:
+                self.frameBuffer.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.frameBuffer.put_nowait(frame)
+            except queue.Full:
+                pass
     def _overlay_metric_value(self, metric_name: str):
         """Sensors available without Afterburner (Kraken + psutil)."""
         name = (metric_name or "Liquid").strip().lower()
@@ -1620,56 +1799,6 @@ class OverlayProducer(Thread):
                 total_font_size=total_size,
             )
 
-    @timing
-    def compose(self, data, img, overlay):
-        mode = str(data.get("composition") or "OFF").upper()
-        if mode in ("OVERLAY", "MONITOR", "EDITOR", "CUSTOM"):
-            return Image.alpha_composite(img, overlay)
-        return img
-
-    @timing
-    def addOverlay(self, postData, rawTime):
-        startTime = time.time()
-
-        data = json.loads(postData.decode("utf-8"))
-        data["size"] = lcd.resolution
-        img = self.parseImage(data)
-        mode = str(data.get("composition") or "OFF").upper()
-
-        if mode in ("OVERLAY", "MONITOR", "EDITOR", "CUSTOM"):
-            overlay = self.renderOverlay(data)
-            img = self.compose(data, img, overlay)
-
-        # Soft-rotate for mount orientation (do not spam HID orientation mid-stream)
-        if data.get("lcdOrientation") is not None:
-            degrees = int(data["lcdOrientation"]) % 360
-            with stream_lock:
-                stream_state["lcd_orientation_degrees"] = degrees
-        else:
-            with stream_lock:
-                degrees = stream_state["lcd_orientation_degrees"]
-        if degrees % 360:
-            img = img.rotate(-(degrees % 360), expand=False, fillcolor=(0, 0, 0, 255))
-
-        overlayTime = time.time() - startTime
-
-        frame = (
-            lcd.imageToFrame(img, adaptive=False),
-            rawTime,
-            overlayTime,
-        )
-        try:
-            self.frameBuffer.put_nowait(frame)
-        except queue.Full:
-            try:
-                self.frameBuffer.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self.frameBuffer.put_nowait(frame)
-            except queue.Full:
-                pass
-
 
 class MetricsProducer(Thread):
     """Merge Afterburner sensors + Kraken liquid into canonical metrics (~2 Hz)."""
@@ -1687,7 +1816,13 @@ class MetricsProducer(Thread):
                 raw = afterburner.read_raw_entries()
                 ab = afterburner.to_canonical(raw)
             except Exception as e:
-                debug("afterburner read failed: {}".format(e))
+                print("afterburner read failed: {}".format(e), flush=True)
+                raw = {}
+                ab = {}
+
+            if not raw and getattr(MetricsProducer, "_had_afterburner", False):
+                print("Afterburner MAHM went offline", flush=True)
+            MetricsProducer._had_afterburner = bool(raw)
 
             cpu_pct = ab.get("cpu_usage_pct")
             if cpu_pct is None:
@@ -1707,18 +1842,17 @@ class MetricsProducer(Thread):
 
             ram_used = ab.get("ram_used")
             ram_total = ab.get("ram_total")
+            # psutil only if Afterburner has no "RAM usage" (commit charge ignored).
             if ram_used is None or ram_total is None:
                 try:
-                    vm = psutil.virtual_memory()
-                    if ram_used is None:
-                        ram_used = vm.used / (1024.0 * 1024.0)
-                    if ram_total is None:
-                        ram_total = vm.total / (1024.0 * 1024.0)
+                    phys_used, phys_total = afterburner.read_physical_ram_mb()
+                    if ram_used is None and phys_used is not None:
+                        ram_used = phys_used
+                    if ram_total is None and phys_total is not None:
+                        ram_total = phys_total
                 except Exception:
                     pass
-
-            # VRAM: Afterburner "Memory usage" is often disabled in MAHM —
-            # fall back to nvidia-smi (matches what the OSD can show).
+            # VRAM: Afterburner "Memory usage" when present; else nvidia-smi.
             vram_used = ab.get("vram_used")
             vram_total = ab.get("vram_total")
             if vram_used is None or vram_total is None:
@@ -1728,9 +1862,10 @@ class MetricsProducer(Thread):
                 if vram_total is None:
                     vram_total = nv_total
 
-            fps = ab.get("fps")
-            if fps is None:
-                fps = afterburner.read_rtss_fps()
+            # Live RTSS wins. If RTSS is present but idle, clear sticky MAHM Framerate.
+            rtss_fps, rtss_present = afterburner.read_rtss_fps()
+            mahm_fps = afterburner.sanitize_fps(ab.get("fps"))
+            fps = afterburner.pick_display_fps(mahm_fps, rtss_fps, rtss_present)
 
             with metrics_lock:
                 metrics["afterburner"] = bool(raw)
@@ -1752,7 +1887,8 @@ class MetricsProducer(Thread):
                 metrics["ram_total"] = ram_total
                 stats["cpu"] = float(cpu_pct or 0)
 
-            time.sleep(0.5)
+            # Align with Afterburner hardware polling (often 200–1000 ms).
+            time.sleep(0.3)
 
 
 class PauseWatchdog(Thread):
