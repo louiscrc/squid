@@ -2,7 +2,7 @@ export function Name() {
   return 'Kraken LCD Bridge';
 }
 export function Version() {
-  return '0.5.3-squid';
+  return '1.0.0-squid';
 }
 export function Type() {
   return 'network';
@@ -49,7 +49,7 @@ const parameters = {
   },
   lcdOrientationDegrees: {
     property: 'lcdOrientationDegrees',
-    group: '',
+    group: 'lighting',
     label: 'LCD Orientation Degrees',
     step: 1,
     type: 'number',
@@ -59,7 +59,7 @@ const parameters = {
   },
   composition: {
     property: 'composition',
-    group: '',
+    group: 'lighting',
     label: 'Composition mode',
     type: 'combobox',
     values: ['OFF', 'OVERLAY', 'MONITOR', 'GIF'],
@@ -67,7 +67,7 @@ const parameters = {
   },
   layoutEditorUrl: {
     property: 'layoutEditorUrl',
-    group: '',
+    group: 'lighting',
     label: 'Layout Editor URL',
     type: 'combobox',
     values: ['http://127.0.0.1:30003/monitor'],
@@ -75,7 +75,7 @@ const parameters = {
   },
   gifEditorUrl: {
     property: 'gifEditorUrl',
-    group: '',
+    group: 'lighting',
     label: 'Gif Editor URL',
     type: 'combobox',
     values: ['http://127.0.0.1:30003/gif'],
@@ -83,7 +83,7 @@ const parameters = {
   },
   shutdownColor: {
     property: 'shutdownColor',
-    group: '',
+    group: 'lighting',
     label: 'Shutdown color',
     type: 'color',
     default: '#000000',
@@ -91,7 +91,7 @@ const parameters = {
   // OVERLAY (classic) props — added dynamically
   spinner: {
     property: 'spinner',
-    group: '',
+    group: 'lighting',
     label: 'Spinner',
     type: 'combobox',
     values: ['OFF', 'STATIC', 'CPU', 'PUMP'],
@@ -99,7 +99,7 @@ const parameters = {
   },
   overlayMetric: {
     property: 'overlayMetric',
-    group: '',
+    group: 'lighting',
     label: 'Overlay data',
     type: 'combobox',
     values: ['Liquid', 'Pump', 'CPU %', 'CPU °'],
@@ -107,7 +107,7 @@ const parameters = {
   },
   overlayBgMode: {
     property: 'overlayBgMode',
-    group: '',
+    group: 'lighting',
     label: 'Background',
     type: 'combobox',
     values: ['Transparent', 'Fixed'],
@@ -115,21 +115,21 @@ const parameters = {
   },
   overlayBgColor: {
     property: 'overlayBgColor',
-    group: '',
+    group: 'lighting',
     label: 'Background color',
     type: 'color',
     default: '#000000',
   },
   titleText: {
     property: 'titleText',
-    group: '',
+    group: 'lighting',
     label: 'Title',
     type: 'textfield',
     default: 'SignalRGB',
   },
   titleFontSize: {
     property: 'titleFontSize',
-    group: '',
+    group: 'lighting',
     label: 'Title size',
     step: 1,
     type: 'number',
@@ -139,7 +139,7 @@ const parameters = {
   },
   sensorFontSize: {
     property: 'sensorFontSize',
-    group: '',
+    group: 'lighting',
     label: 'Value size',
     step: 1,
     type: 'number',
@@ -149,7 +149,7 @@ const parameters = {
   },
   sensorLabelFontSize: {
     property: 'sensorLabelFontSize',
-    group: '',
+    group: 'lighting',
     label: 'Label size',
     step: 1,
     type: 'number',
@@ -374,9 +374,8 @@ export function Initialize() {
   const brightness = device.getBrightness();
   if (brightness <= 0) {
     pauseBridge();
-  } else if (device.getProperty('composition')?.value !== 'GIF') {
-    resumeBridge(brightness);
   }
+  // resumeBridge is handled inside oncompositionChanged for non-GIF modes
   onlcdOrientationDegreesChanged();
   onfpsChanged();
 }
@@ -462,7 +461,15 @@ export function DiscoveryService() {
   this.ReadInfo = function (xhr) {
     if (xhr.readyState === 4) {
       if (xhr.status === 200 && xhr.responseText) {
-        this.deviceInfo = JSON.parse(xhr.responseText);
+        try {
+          this.deviceInfo = JSON.parse(xhr.responseText);
+        } catch (e) {
+          service.log('Bridge info parse failed');
+          if (this.controller) {
+            this.controller.updateStatus({online: false});
+          }
+          return;
+        }
         if (!this.controller) {
           this.controller = new KrakenLCDBridgeController(this.deviceInfo);
           service.addController(this.controller);
