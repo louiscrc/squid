@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kraken Overlay Editor</title>
-  <link rel="stylesheet" href="/overlay/app.css" />
+  <title>Kraken Monitor</title>
+  <link rel="stylesheet" href="/monitor/app.css" />
   <style>
     @font-face {
       font-family: 'RubikOverlay';
@@ -16,7 +16,7 @@
 </head>
 <body>
   <header class="top">
-    <h1>Kraken overlay</h1>
+    <h1>Kraken monitor</h1>
     <div class="status" id="status">Connecting…</div>
     <div class="actions">
       <label class="inline">BG <input type="color" id="bgColor" value="#000000" /><label class="check tiny"><input type="checkbox" id="bgTransparent" /> transparent</label></label>
@@ -64,11 +64,14 @@
         </label>
         <label>Value size <input type="number" id="propFont" min="8" max="200" /></label>
         <label>Label size <input type="number" id="propLabelFont" min="8" max="80" /></label>
+        <label id="propUnitWrap">Unit size <input type="number" id="propUnitFont" min="8" max="200" /></label>
+        <label id="propTotalWrap">Total size <input type="number" id="propTotalFont" min="8" max="200" /></label>
+        <label class="check" id="propShowTotalWrap"><input type="checkbox" id="propShowTotal" /> Show totals</label>
         <label class="inline hidden" id="propXY">X <input type="number" id="propX" min="20" max="620" /> Y <input type="number" id="propY" min="20" max="620" /></label>
         <button type="button" id="btnDelete" class="danger">Remove</button>
       </div>
     </aside>
   </main>
-  <script src="/overlay/app.js"></script>
+  <script src="/monitor/app.js"></script>
 </body>
 </html>

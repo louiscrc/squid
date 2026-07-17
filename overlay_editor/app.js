@@ -279,18 +279,19 @@
     }
   }
 
-  function drawParts(parts, x, y, fontSize, fill, labelFill) {
-    const unitSize = Math.max(10, Math.round(fontSize * 0.55));
-    const totalSize = Math.max(9, Math.round(fontSize * 0.42));
-    const tinySize = Math.max(9, Math.round(fontSize * 0.36));
+  function drawParts(parts, x, y, fontSize, fill, labelFill, opts) {
+    const o = opts || {};
+    const unitSize = Math.max(8, Number(o.unitFontSize) || Math.round(fontSize * 0.55));
+    const totalSize = Math.max(8, Number(o.totalFontSize) || Math.round(fontSize * 0.42));
+    const showTotal = o.showTotal !== false;
+    const filtered = showTotal ? parts : parts.filter((p) => p.role !== 'total');
     const grey = labelFill || fill;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    const measured = parts.map((p) => {
+    const measured = filtered.map((p) => {
       let size = fontSize;
-      if (p.role === 'unit') size = unitSize;
+      if (p.role === 'unit' || p.role === 'tiny') size = unitSize;
       else if (p.role === 'total') size = totalSize;
-      else if (p.role === 'tiny') size = tinySize;
       ctx.font = metricFont(size);
       return { ...p, size, w: ctx.measureText(p.text).width };
     });
@@ -375,7 +376,11 @@
         ctx.font = metricFont(labelSize);
         ctx.fillText(w.label, w.x, labelCy);
       }
-      drawParts(parts, w.x, valueCy, fontSize, fg, labelFg);
+      drawParts(parts, w.x, valueCy, fontSize, fg, labelFg, {
+        unitFontSize: w.unitFontSize,
+        totalFontSize: w.totalFontSize,
+        showTotal: w.showTotal !== false,
+      });
       if (isSel) {
         ctx.strokeStyle = '#3d8bfd';
         ctx.lineWidth = 2;
@@ -458,6 +463,9 @@
       metricWrap.classList.add('hidden');
       xyWrap.classList.remove('hidden');
       delBtn.classList.add('hidden');
+      document.getElementById('propUnitWrap').classList.add('hidden');
+      document.getElementById('propTotalWrap').classList.add('hidden');
+      document.getElementById('propShowTotalWrap').classList.add('hidden');
       document.getElementById('propLabel').value = arc.label || '';
       document.getElementById('propFont').value = arc.fontSize || 30;
       document.getElementById('propLabelFont').value = arc.labelFontSize || 16;
@@ -470,11 +478,20 @@
     metricWrap.classList.remove('hidden');
     xyWrap.classList.add('hidden');
     delBtn.classList.remove('hidden');
+    document.getElementById('propUnitWrap').classList.remove('hidden');
+    document.getElementById('propTotalWrap').classList.remove('hidden');
+    document.getElementById('propShowTotalWrap').classList.remove('hidden');
     fillMetricSelect();
     document.getElementById('propLabel').value = w.label || '';
     document.getElementById('propMetric').value = w.metric;
     document.getElementById('propFont').value = w.fontSize || 28;
     document.getElementById('propLabelFont').value = w.labelFontSize || 12;
+    const fs = w.fontSize || 28;
+    document.getElementById('propUnitFont').value =
+      w.unitFontSize != null ? w.unitFontSize : Math.max(10, Math.round(fs * 0.55));
+    document.getElementById('propTotalFont').value =
+      w.totalFontSize != null ? w.totalFontSize : Math.max(9, Math.round(fs * 0.42));
+    document.getElementById('propShowTotal').checked = w.showTotal !== false;
   }
 
   function dropWidgetsUsing(metric) {
@@ -493,6 +510,9 @@
       y: 320,
       fontSize: 56,
       labelFontSize: 18,
+      unitFontSize: Math.max(10, Math.round(56 * 0.55)),
+      totalFontSize: Math.max(9, Math.round(56 * 0.42)),
+      showTotal: true,
       color: layout.textColor || '#ffffff',
       align: 'center',
       format: meta.format || 'auto',
@@ -540,6 +560,21 @@
       const v = Number(document.getElementById('propLabelFont').value) || 12;
       if (w) w.labelFontSize = v;
       if (arc) arc.labelFontSize = v;
+    });
+    bind('propUnitFont', (w) => {
+      if (!w) return;
+      w.unitFontSize = Number(document.getElementById('propUnitFont').value) || 10;
+    });
+    bind('propTotalFont', (w) => {
+      if (!w) return;
+      w.totalFontSize = Number(document.getElementById('propTotalFont').value) || 9;
+    });
+    document.getElementById('propShowTotal').addEventListener('change', () => {
+      const w = selected();
+      if (!w) return;
+      w.showTotal = document.getElementById('propShowTotal').checked;
+      markDirty(true);
+      draw();
     });
     bind('propX', (_w, arc) => {
       if (!arc) return;
@@ -668,7 +703,7 @@
 
   document.getElementById('btnSave').addEventListener('click', async () => {
     try {
-      layout = await api('/overlay/layout', {
+      layout = await api('/monitor/layout', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(layout),
@@ -686,7 +721,7 @@
   document.getElementById('btnReset').addEventListener('click', async () => {
     if (!confirm('Reset to default layout?')) return;
     try {
-      layout = await api('/overlay/layout/reset', { method: 'POST', body: '{}' });
+      layout = await api('/monitor/layout/reset', { method: 'POST', body: '{}' });
       selectedId = null;
       selectedArcSide = null;
       markDirty(false);
@@ -725,7 +760,7 @@
       await document.fonts.load('700 64px RubikOverlay');
       await document.fonts.ready;
     } catch (_) { /* fallback to Segoe UI */ }
-    layout = await api('/overlay/layout');
+    layout = await api('/monitor/layout');
     syncThemeInputs();
     await refreshMetrics();
     showProps();

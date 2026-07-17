@@ -2,7 +2,7 @@ export function Name() {
   return 'Kraken LCD Bridge';
 }
 export function Version() {
-  return '0.3.0-squid';
+  return '0.5.3-squid';
 }
 export function Type() {
   return 'network';
@@ -14,7 +14,7 @@ export function Documentation() {
   return 'N/A';
 }
 export function Size() {
-  return [6, 6];
+  return [41, 41];
 }
 export function DefaultPosition() {
   return [165, 60];
@@ -32,40 +32,20 @@ export function LedPositions() {
   return [];
 }
 
+/** Fixed canvas sample size (was ScreenSize slider). */
+const SCREEN_SIZE = 40;
+
+/**
+ * FPS dropdown. MAX = as fast as SignalRGB calls Render (async posts).
+ */
 const parameters = {
   fps: {
     property: 'fps',
     group: '',
     label: 'FPS',
     type: 'combobox',
-    values: ['MAXIMUM', 'SIGNALRGB LIMITED', '20', '10', '5', '1', '0.1'],
-    default: 'SIGNALRGB LIMITED',
-  },
-  screenSize: {
-    property: 'screenSize',
-    group: '',
-    label: 'ScreenSize',
-    step: '1',
-    type: 'number',
-    min: '1',
-    max: '80',
-    default: '40',
-  },
-  composition: {
-    property: 'composition',
-    group: '',
-    label: 'Composition mode',
-    type: 'combobox',
-    values: ['OFF', 'OVERLAY', 'MIX'],
-    default: 'OVERLAY',
-  },
-  lcdOrientation: {
-    property: 'lcdOrientation',
-    group: '',
-    label: 'LCD Orientation',
-    type: 'combobox',
-    values: ['0', '90', '180', '270'],
-    default: '90',
+    values: ['0.1', '0.5', '1', '2', '3', '4', '5', '10', '20', '24', '30', 'MAX'],
+    default: '1',
   },
   lcdOrientationDegrees: {
     property: 'lcdOrientationDegrees',
@@ -77,31 +57,114 @@ const parameters = {
     max: 359,
     default: 90,
   },
-  overlayTransparency: {
-    property: 'overlayTransparency',
+  composition: {
+    property: 'composition',
     group: '',
-    label: 'Overlay Transparency',
+    label: 'Composition mode',
+    type: 'combobox',
+    values: ['OFF', 'OVERLAY', 'MONITOR', 'GIF'],
+    default: 'MONITOR',
+  },
+  layoutEditorUrl: {
+    property: 'layoutEditorUrl',
+    group: '',
+    label: 'Layout Editor URL',
+    type: 'combobox',
+    values: ['http://127.0.0.1:30003/monitor'],
+    default: 'http://127.0.0.1:30003/monitor',
+  },
+  gifEditorUrl: {
+    property: 'gifEditorUrl',
+    group: '',
+    label: 'Gif Editor URL',
+    type: 'combobox',
+    values: ['http://127.0.0.1:30003/gif'],
+    default: 'http://127.0.0.1:30003/gif',
+  },
+  shutdownColor: {
+    property: 'shutdownColor',
+    group: '',
+    label: 'Shutdown color',
+    type: 'color',
+    default: '#000000',
+  },
+  // OVERLAY (classic) props — added dynamically
+  spinner: {
+    property: 'spinner',
+    group: '',
+    label: 'Spinner',
+    type: 'combobox',
+    values: ['OFF', 'STATIC', 'CPU', 'PUMP'],
+    default: 'STATIC',
+  },
+  overlayMetric: {
+    property: 'overlayMetric',
+    group: '',
+    label: 'Overlay data',
+    type: 'combobox',
+    values: ['Liquid', 'Pump', 'CPU %', 'CPU °'],
+    default: 'Liquid',
+  },
+  overlayBgMode: {
+    property: 'overlayBgMode',
+    group: '',
+    label: 'Background',
+    type: 'combobox',
+    values: ['Transparent', 'Fixed'],
+    default: 'Transparent',
+  },
+  overlayBgColor: {
+    property: 'overlayBgColor',
+    group: '',
+    label: 'Background color',
+    type: 'color',
+    default: '#000000',
+  },
+  titleText: {
+    property: 'titleText',
+    group: '',
+    label: 'Title',
+    type: 'textfield',
+    default: 'SignalRGB',
+  },
+  titleFontSize: {
+    property: 'titleFontSize',
+    group: '',
+    label: 'Title size',
     step: 1,
     type: 'number',
-    min: 0,
-    max: 100,
-    default: 0,
+    min: 10,
+    max: 200,
+    default: 40,
   },
-  textOverlay: {
-    property: 'textOverlay',
+  sensorFontSize: {
+    property: 'sensorFontSize',
     group: '',
-    label: 'Use overlay layout',
-    type: 'boolean',
-    default: true,
+    label: 'Value size',
+    step: 1,
+    type: 'number',
+    min: 10,
+    max: 320,
+    default: 160,
+  },
+  sensorLabelFontSize: {
+    property: 'sensorLabelFontSize',
+    group: '',
+    label: 'Label size',
+    step: 1,
+    type: 'number',
+    min: 10,
+    max: 200,
+    default: 40,
   },
 };
+
 export function ControllableParameters() {
   return [
     parameters.fps,
-    parameters.screenSize,
-    parameters.composition,
-    parameters.lcdOrientation,
     parameters.lcdOrientationDegrees,
+    parameters.composition,
+    parameters.shutdownColor,
   ];
 }
 
@@ -141,28 +204,12 @@ function resumeBridge(brightness) {
   );
 }
 
-/** True when the canvas slice is effectively black (SignalRGB pause / blank). */
-function isEffectivelyDark(bytes) {
-  if (!bytes || bytes.length < 12) {
-    return false;
-  }
-  let sum = 0;
-  let n = 0;
-  const step = Math.max(4, Math.floor(bytes.length / 400));
-  for (let i = 0; i + 2 < bytes.length; i += step) {
-    sum += bytes[i] + bytes[i + 1] + bytes[i + 2];
-    n++;
-  }
-  // Average channel under ~2/255 → treat as blanked canvas.
-  return n > 0 && sum / n < 6;
-}
-
 /**
  * Canvas Play/Pause forces device.color() to #000000 (SignalRGB docs).
  * getImageBuffer() does NOT — it keeps streaming a dimmed live frame.
  */
 function isCanvasColorBlack() {
-  const s = screenSize;
+  const s = SCREEN_SIZE;
   const points = [
     [1, 1],
     [(s / 2) | 0, (s / 2) | 0],
@@ -180,33 +227,100 @@ function isCanvasColorBlack() {
 }
 
 function getLcdOrientationDegrees() {
-  const fine = device.getProperty('lcdOrientationDegrees')?.value;
-  if (fine !== undefined && fine !== null && fine !== '') {
-    return Number(fine) % 360;
+  return Number(device.getProperty('lcdOrientationDegrees')?.value ?? 90) % 360;
+}
+
+function clearLegacyProps() {
+  device.removeProperty('lcdOrientation');
+  device.removeProperty('overlayTransparency');
+  device.removeProperty('textOverlay');
+  device.removeProperty('imageFormat');
+  device.removeProperty('colorPalette');
+  device.removeProperty('fpsIndex');
+  device.removeProperty('screenSize');
+  device.removeProperty('gifPath');
+  device.removeProperty('openGifEditor');
+  device.removeProperty('customEditorUrl');
+  device.removeProperty('openCustomEditor');
+}
+
+function setOverlayProps(on) {
+  const keys = [
+    'spinner',
+    'overlayMetric',
+    'overlayBgMode',
+    'overlayBgColor',
+    'titleText',
+    'titleFontSize',
+    'sensorFontSize',
+    'sensorLabelFontSize',
+  ];
+  for (const k of keys) {
+    if (on) {
+      device.addProperty(parameters[k]);
+    } else {
+      device.removeProperty(k);
+    }
   }
-  const preset = device.getProperty('lcdOrientation')?.value;
-  return Number(preset ?? 90) % 360;
+  syncOverlayBgColorProp();
+}
+
+function syncOverlayBgColorProp() {
+  const mode = device.getProperty('composition')?.value || 'OFF';
+  if (mode !== 'OVERLAY') {
+    return;
+  }
+  const bg = device.getProperty('overlayBgMode')?.value || 'Transparent';
+  if (bg === 'Fixed') {
+    device.addProperty(parameters.overlayBgColor);
+  } else {
+    device.removeProperty('overlayBgColor');
+  }
+}
+
+function setMonitorProps(on) {
+  if (on) {
+    device.addProperty(parameters.layoutEditorUrl);
+  } else {
+    device.removeProperty('layoutEditorUrl');
+    device.removeProperty('customEditorUrl');
+    device.removeProperty('openCustomEditor');
+  }
+}
+
+function setGifProps(on) {
+  if (on) {
+    device.addProperty(parameters.gifEditorUrl);
+  } else {
+    device.removeProperty('gifEditorUrl');
+    device.removeProperty('openGifEditor');
+    device.removeProperty('gifPath');
+  }
+}
+
+function pushRestoreGif() {
+  XmlHttp.Post(
+    BRIDGE_ADDRESS + '/gif',
+    () => {},
+    {
+      restore: true,
+      degrees: getLcdOrientationDegrees(),
+    },
+    true,
+    120000
+  );
 }
 
 export function onfpsChanged() {
   nextCall = 0;
 }
 
-export function onlcdOrientationChanged() {
-  postOrientation(device.getProperty('lcdOrientation')?.value ?? 90);
-}
-
 export function onlcdOrientationDegreesChanged() {
   postOrientation(device.getProperty('lcdOrientationDegrees')?.value ?? 90);
 }
 
-export function onscreenSizeChanged() {
-  device.setSize([screenSize + 1, screenSize + 1]);
-}
-
 export function onBrightnessChanged() {
   const brightness = device.getBrightness();
-  // SignalRGB pause / master dim often drives brightness to 0 while Render still runs.
   if (brightness <= 0) {
     pauseBridge();
     return;
@@ -224,26 +338,32 @@ export function onBrightnessChanged() {
 }
 
 export function oncompositionChanged() {
-  if (device.getProperty('composition').value === 'OFF') {
-    device.removeProperty('overlayTransparency');
-    device.removeProperty('textOverlay');
+  clearLegacyProps();
+  const mode = device.getProperty('composition')?.value || 'OFF';
+  // EDITOR/CUSTOM kept as aliases for older saved configs
+  const isMonitor =
+    mode === 'MONITOR' || mode === 'EDITOR' || mode === 'CUSTOM';
+  setOverlayProps(mode === 'OVERLAY');
+  setMonitorProps(isMonitor);
+  setGifProps(mode === 'GIF');
+  if (mode === 'GIF') {
+    pushRestoreGif();
   } else {
-    device.addProperty(parameters.overlayTransparency);
-    device.addProperty(parameters.textOverlay);
+    const brightness = device.getBrightness();
+    if (brightness > 0) {
+      resumeBridge(brightness);
+    }
   }
-  // Drop legacy props if still present from older plugin versions
-  device.removeProperty('spinner');
-  device.removeProperty('imageFormat');
-  device.removeProperty('colorPalette');
 }
 
-export function ontextOverlayChanged() {
-  // Layout is edited at http://127.0.0.1:30003/overlay — no per-field SignalRGB props.
+export function onoverlayBgModeChanged() {
+  syncOverlayBgColorProp();
 }
 
 export function Initialize() {
   device.setName(controller.name);
-  onscreenSizeChanged();
+  device.setSize([SCREEN_SIZE + 1, SCREEN_SIZE + 1]);
+  clearLegacyProps();
   oncompositionChanged();
   try {
     const image = XmlHttp.downloadImage(device.image);
@@ -251,14 +371,14 @@ export function Initialize() {
   } catch (error) {
     device.log('Could not retrieve device image');
   }
-  // Resume streaming after pause / restart
   const brightness = device.getBrightness();
   if (brightness <= 0) {
     pauseBridge();
-  } else {
+  } else if (device.getProperty('composition')?.value !== 'GIF') {
     resumeBridge(brightness);
   }
   onlcdOrientationDegreesChanged();
+  onfpsChanged();
 }
 
 export function Render() {
@@ -272,22 +392,26 @@ export function Render() {
     return false;
   }
 
-  // Pause button: color() goes black, but getImageBuffer stays dimmed/live.
-  // (Keep this — without it the LCD never true-blanks on SignalRGB pause.)
+  const mode = device.getProperty('composition')?.value || 'OFF';
+
+  // GIF mode: firmware loops the uploaded bucket; keep SignalRGB device online
+  // but do not stream canvas frames. Load / replace GIFs via the web editor.
+  if (mode === 'GIF') {
+    nextCall = Date.now() + 1000;
+    return false;
+  }
+
   if (isCanvasColorBlack()) {
     pauseBridge();
     return false;
   }
 
-  const RGBData = device.getImageBuffer(0, 0, screenSize, screenSize, {
+  const RGBData = device.getImageBuffer(0, 0, SCREEN_SIZE, SCREEN_SIZE, {
     flipH: false,
-    outputWidth: screenSize,
-    outputHeight: screenSize,
+    outputWidth: SCREEN_SIZE,
+    outputHeight: SCREEN_SIZE,
     format: 'PNG',
   });
-
-  // Do NOT use isEffectivelyDark(RGBData): fullscreen games often darken the
-  // capture buffer and that falsely blanked the Kraken.
 
   if (bridgePaused) {
     resumeBridge(brightness);
@@ -297,21 +421,35 @@ export function Render() {
     raw: XmlHttp.Bytes2Base64(RGBData),
     rotation: device.rotation,
     lcdOrientation: getLcdOrientationDegrees(),
-    composition: device.getProperty('composition').value,
-    overlayTransparency: device.getProperty('overlayTransparency')?.value ?? 0,
-    textOverlay: device.getProperty('textOverlay')?.value ?? false,
+    composition: mode,
+    spinner: device.getProperty('spinner')?.value ?? 'OFF',
+    overlayMetric: device.getProperty('overlayMetric')?.value ?? 'Liquid',
+    overlayBgMode: device.getProperty('overlayBgMode')?.value ?? 'Transparent',
+    overlayBgColor: device.getProperty('overlayBgColor')?.value ?? '#000000',
+    titleText: device.getProperty('titleText')?.value ?? 'SignalRGB',
+    titleFontSize: device.getProperty('titleFontSize')?.value ?? 40,
+    sensorFontSize: device.getProperty('sensorFontSize')?.value ?? 160,
+    sensorLabelFontSize: device.getProperty('sensorLabelFontSize')?.value ?? 40,
   };
+
   const fpsConfig = device.getProperty('fps')?.value;
   if (Number(fpsConfig)) {
     nextCall = Date.now() + 1000 / Number(fpsConfig) - 15;
   }
 
-  const async = fpsConfig === 'MAXIMUM';
+  const async = fpsConfig === 'MAX';
   XmlHttp.Post(BRIDGE_ADDRESS + '/frame', () => {}, data, async);
 }
 
 export function Shutdown(suspend) {
-  pauseBridge();
+  const color = device.getProperty('shutdownColor')?.value ?? '#000000';
+  XmlHttp.Post(
+    BRIDGE_ADDRESS + '/shutdown',
+    () => {},
+    {color: color},
+    false
+  );
+  bridgePaused = true;
 }
 
 export function DiscoveryService() {
@@ -368,7 +506,6 @@ class KrakenLCDBridgeController {
 
   updateStatus({online}) {
     this.online = online;
-
     this.update();
   }
 
@@ -440,9 +577,9 @@ class XmlHttp {
     xhr.send();
   }
 
-  static Post(url, callback, data, async = true) {
+  static Post(url, callback, data, async = true, timeoutMs = 1000) {
     const xhr = new XMLHttpRequest();
-    xhr.timeout = 1000;
+    xhr.timeout = timeoutMs;
     xhr.open('POST', url, async);
 
     xhr.setRequestHeader('Accept', 'application/json');

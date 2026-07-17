@@ -8,7 +8,7 @@ import uuid
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
-LAYOUT_VERSION = 9
+LAYOUT_VERSION = 10
 
 # Clear air between label bottom and value top (both centered on their y).
 LABEL_VALUE_GAP_PX = 12
@@ -103,6 +103,14 @@ def default_layout() -> Dict[str, Any]:
     }
 
 
+def default_unit_font(font_size: int) -> int:
+    return max(10, int(round(font_size * 0.55)))
+
+
+def default_total_font(font_size: int) -> int:
+    return max(9, int(round(font_size * 0.42)))
+
+
 def _w(metric, label, fmt, x, y, font, label_font):
     return {
         "id": "w_" + metric,
@@ -112,6 +120,9 @@ def _w(metric, label, fmt, x, y, font, label_font):
         "y": y,
         "fontSize": font,
         "labelFontSize": label_font,
+        "unitFontSize": default_unit_font(font),
+        "totalFontSize": default_total_font(font),
+        "showTotal": True,
         "color": "#ffffff",
         "align": "center",
         "format": fmt,
@@ -161,11 +172,12 @@ def load_layout() -> Dict[str, Any]:
             data = json.load(f)
         if not isinstance(data, dict) or "widgets" not in data:
             return default_layout()
+        # Soft-migrate: normalize fills new fields; do not wipe user layouts.
+        cleaned = normalize_layout(data)
         if int(data.get("version") or 1) < LAYOUT_VERSION:
-            layout = default_layout()
-            save_layout(layout)
-            return layout
-        return normalize_layout(data)
+            cleaned["version"] = LAYOUT_VERSION
+            save_layout(cleaned)
+        return cleaned
     except Exception:
         return default_layout()
 
@@ -289,6 +301,24 @@ def normalize_layout(layout: Dict[str, Any]) -> Dict[str, Any]:
             label_default = "CPU PWR"
         elif metric == "gpu_power_w":
             label_default = "GPU PWR"
+        font_size = max(8, min(200, int(raw.get("fontSize", 28))))
+        unit_raw = raw.get("unitFontSize")
+        total_raw = raw.get("totalFontSize")
+        unit_fs = (
+            default_unit_font(font_size)
+            if unit_raw is None
+            else max(8, min(200, int(unit_raw)))
+        )
+        total_fs = (
+            default_total_font(font_size)
+            if total_raw is None
+            else max(8, min(200, int(total_raw)))
+        )
+        show_total = raw.get("showTotal", True)
+        if isinstance(show_total, str):
+            show_total = show_total.strip().lower() not in ("0", "false", "no", "")
+        else:
+            show_total = bool(show_total)
         widgets.append(
             {
                 "id": wid,
@@ -296,8 +326,11 @@ def normalize_layout(layout: Dict[str, Any]) -> Dict[str, Any]:
                 "label": str(raw.get("label") or label_default),
                 "x": int(raw.get("x", 320)),
                 "y": int(raw.get("y", 320)),
-                "fontSize": max(8, min(200, int(raw.get("fontSize", 28)))),
+                "fontSize": font_size,
                 "labelFontSize": max(8, min(80, int(raw.get("labelFontSize", 12)))),
+                "unitFontSize": unit_fs,
+                "totalFontSize": total_fs,
+                "showTotal": show_total,
                 "color": str(raw.get("color") or "#ffffff"),
                 "align": str(raw.get("align") or "center"),
                 "format": str(raw.get("format") or "auto"),
@@ -325,33 +358,44 @@ def normalize_layout(layout: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _parts_missing(
-    max_v: Optional[float] = None, as_int: bool = False, unit: str = ""
+    max_v: Optional[float] = None,
+    as_int: bool = False,
+    unit: str = "",
+    show_total: bool = True,
 ) -> List[MetricPart]:
-    if max_v is None:
-        return [("--", "num")]
+    if max_v is None or not show_total:
+        parts: List[MetricPart] = [("--", "num")]
+        if unit:
+            parts.append((unit, "unit"))
+        return parts
     if as_int:
         mid = "/{:.0f}".format(max_v)
     else:
         mid = "/{:.1f}".format(max_v)
-    parts: List[MetricPart] = [("--", "num"), (mid, "total")]
+    parts = [("--", "num"), (mid, "total")]
     if unit:
-        parts.append((unit, "tiny"))
+        parts.append((unit, "unit"))
     return parts
 
 
 def format_metric_parts(
-    metric: str, metrics: Dict[str, Any], fmt: str = "auto"
+    metric: str,
+    metrics: Dict[str, Any],
+    fmt: str = "auto",
+    show_total: bool = True,
 ) -> List[MetricPart]:
     """Split value into number + smaller unit/suffix (° stays same size as number)."""
     if metric == "vram":
         return _parts_mem(
             metrics.get("vram_used"),
             metrics.get("vram_total"),
+            show_total=show_total,
         )
     if metric == "ram":
         return _parts_mem(
             metrics.get("ram_used"),
             metrics.get("ram_total"),
+            show_total=show_total,
         )
 
     v = metrics.get(metric)
@@ -385,41 +429,54 @@ def format_metric_parts(
         if mx is not None and mx <= 0:
             mx = None
         if v is None:
-            return _parts_missing(mx, as_int=True, unit=" W")
-        if mx is not None:
-            return [
-                ("{:.0f}".format(v), "num"),
-                ("/{:.0f}".format(mx), "total"),
-                (" W", "tiny"),
-            ]
-        return [("{:.0f}".format(v), "num"), (" W", "tiny")]
+            return _parts_missing(mx, as_int=True, unit=" W", show_total=show_total)
+        parts: List[MetricPart] = [("{:.0f}".format(v), "num")]
+        if show_total and mx is not None:
+            parts.append(("/{:.0f}".format(mx), "total"))
+        parts.append((" W", "unit"))
+        return parts
     if fmt == "mem":
-        return _parts_mem(v, None)
+        return _parts_mem(v, None, show_total=show_total)
     if v is None:
         return _parts_missing()
     return [("{:.0f}".format(v), "num")]
 
 
-def _parts_mem(used: Optional[float], total: Optional[float]) -> List[MetricPart]:
+def _parts_mem(
+    used: Optional[float],
+    total: Optional[float],
+    show_total: bool = True,
+) -> List[MetricPart]:
     total_gb = None
     if total is not None and total > 0:
         total_gb = total / 1024.0
     if used is None:
-        return _parts_missing(total_gb, as_int=False, unit=" GB") if total_gb is not None else _parts_missing()
+        return (
+            _parts_missing(total_gb, as_int=False, unit=" GB", show_total=show_total)
+            if total_gb is not None
+            else _parts_missing()
+        )
     u = used / 1024.0
     if total is None or total <= 0:
         if used <= 100:
             return [("{:.0f}".format(used), "num"), ("%", "unit")]
-        return [("{:.1f}".format(u), "num"), (" GB", "tiny")]
-    return [
-        ("{:.1f}".format(u), "num"),
-        ("/{:.1f}".format(total_gb), "total"),
-        (" GB", "tiny"),
-    ]
+        return [("{:.1f}".format(u), "num"), (" GB", "unit")]
+    parts: List[MetricPart] = [("{:.1f}".format(u), "num")]
+    if show_total:
+        parts.append(("/{:.1f}".format(total_gb), "total"))
+    parts.append((" GB", "unit"))
+    return parts
 
 
-def format_metric(metric: str, metrics: Dict[str, Any], fmt: str = "auto") -> str:
-    return "".join(t for t, _ in format_metric_parts(metric, metrics, fmt))
+def format_metric(
+    metric: str,
+    metrics: Dict[str, Any],
+    fmt: str = "auto",
+    show_total: bool = True,
+) -> str:
+    return "".join(
+        t for t, _ in format_metric_parts(metric, metrics, fmt, show_total=show_total)
+    )
 
 
 def is_transparent(color: Any) -> bool:

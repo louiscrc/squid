@@ -161,5 +161,10 @@ cython_debug/
 
 
 *.gif
+!images/404.gif
+giphy.key
+last_gif.encoded.gif
+last_gif.source.gif
+last_gif.json
 test/
 output/
