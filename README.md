@@ -1,66 +1,80 @@
-# AIO LCD Unchained
+# Squid
 
-WARNING: i'm not responsible for any damage to your equipment. If anything get stuck your best option is to turn off your pc and disconnect it from power for a minute or two before restarting it.
+Fork of [brokenmass/AIOLCDUnchained](https://github.com/brokenmass/AIOLCDUnchained) — SignalRGB bridge for NZXT Kraken LCDs (`SignalRGBLCDBridge.exe`).
 
-## Full app roadmap
+WARNING: i'm not responsible for any damage to your equipment. If anything get stuck your best option is to turn off your pc and disconnect it from power for a minute or two before restarting it. Close **NZXT CAM** (and any other app that writes the Kraken LCD) before running the bridge.
 
-- Configuration:
-  - [x] SignalRGB configuration
-  - [ ] Webinterface/Electron app for complete configuration
-- Stats sources:
-  - [x] AIO itsels
-  - [x] CPU Usage
-  - [ ] LibreHardwareMonitor
-  - [ ] AIDA ?
-- Background:
-  - [x] SignalRGB
-  - [ ] Static image
-  - [ ] Single Gif
-  - [ ] Gif/Static slideshow
-- Overlay:
-  - [x] Temperature metric
-  - [ ] Other devices temperatures / stats
-  - [x] Static circle
-  - [ ] Other static shapes / Generic PNG
-  - [x] Spinner based on metrics
-  - [x] Static text
-  - [ ] Dynamic text
-  - [ ] Clock
-  - [ ] Music ticket
-- Devices:
-  - [x] NZXT Kraken 2023 Elite
-  - [ ] NZXT Kraken 2023
-  - [x] NZXT Kraken Z3
-  - [ ] Corsair Capellix
-  - Suggest a device by raising an Issue !
+This was tested SignalRGB v2.4.22. Recent SignalRGB versions have been really buggy with the Kraken LCDs. The plugin might work on newer versions when they will fix the issues.
+
+## What’s different from upstream
+
+
+|                  | Upstream                                           | Squid                                                                 |
+| ---------------- | -------------------------------------------------- | --------------------------------------------------------------------- |
+| Pause / shutdown | Canvas pause often left the LCD looping (esp. GIF) | Plugin pause / `Shutdown` blanks the LCD                              |
+| Modes            | Canvas + simple overlay                            | `OFF` **·** `OVERLAY` **·** `MONITOR` **·** `GIF`                     |
+| Monitor HUD      | Liquid / spinner overlay                           | Editable multi-widget HUD (CPU/GPU, RAM/VRAM, power, FPS)             |
+| Metrics          | AIO + light CPU                                    | **MSI Afterburner (MAHM)**, RTSS FPS fallback, nvidia-smi when needed |
+| Editors          | Limited                                            | Local web UIs at `/monitor` and `/gif`                                |
+| Frame path       | Python compose                                     | Rust `py_compose_encode` (blend + rotate + mask + Q565)               |
+
+### MONITOR mode example (layout is customizable)
+
+![Kraken LCD in MONITOR mode — liquid, CPU/GPU, FPS, RAM/VRAM, power](images/monitor-mode.jpeg)
 
 ## Status
 
-Check this youtube video to see latest status of SignalRGB integration:
+Upstream SignalRGB integration demo:
 
-[![Status](http://img.youtube.com/vi/-EUDxjzwlcg/0.jpg)](http://www.youtube.com/watch?v=-EUDxjzwlcg 'Kraken Elite SignalRGB')
+[![Kraken Elite SignalRGB](https://img.youtube.com/vi/-EUDxjzwlcg/0.jpg)](https://www.youtube.com/watch?v=-EUDxjzwlcg)
+
+Squid adds MONITOR / GIF editors and tighter pause + metrics behavior on top of that bridge.
 
 ## Installation
 
-Download latest executable from github releases run it and restart signalrgb.
-The app adds an icon to the systray that can be left clicked
+1. Close NZXT CAM / other proprietary Kraken LCD software.
+2. Download the latest `SignalRGBLCDBridge.exe` from [GitHub Releases](../../releases).
+3. Run the executable — it adds an icon to the **systray** (left-click for menu). On first run it installs the SignalRGB plugin under `Documents\WhirlwindFX\Plugins\KrakenLCDBridge\`.
+4. Restart **SignalRGB** and add / enable **Kraken LCD Bridge** on the canvas.
+
+Leave the tray app running while you use SignalRGB. The plugin talks to `http://127.0.0.1:30003` and does **not** start the bridge by itself.
+
+Optional: start the exe at Windows logon (Startup folder / scheduled task) so it is always available with SignalRGB.
 
 ## Development
 
-You must have python 3.11 and rust installed in your system
+You must have **Python 3.14**, **Rust**, and **[uv](https://github.com/astral-sh/uv)** on **Windows** (WinUSB — not WSL/macOS for hardware).
 
-checkout the repository or download the latest code and install python dependencies
+Checkout the repository or download the latest code and install python dependencies:
 
 ```
-pip install -r requirements.txt --upgrade
+uv venv --python 3.14
+.\.venv\Scripts\Activate.ps1
+uv pip install -r requirements.txt
 ```
 
-build and install the q565 image compressor using rust
+Build and install the q565 / compose Rust extension:
 
 ```
 maturin build --release
-pip install ./target/wheels/q565_rust-0.1.0-cp311-none-win_amd64.whl --force-reinstall
+uv pip install (Get-ChildItem .\target\wheels\q565_rust-*-win_amd64.whl).FullName --force-reinstall
 ```
+
+Build a release exe (windowed, no console):
+
+```
+.\build.ps1
+```
+
+Output: `dist\SignalRGBLCDBridge.exe`
+
+Optional unit tests (no USB):
+
+```
+PYTHONPATH=. python -m pytest tests/test_metrics.py -q
+```
+
+
 
 ## Usage
 
@@ -74,6 +88,8 @@ Writes a gif (static or animated) to the device
 python writeGif.py path/to/your/file.gif
 ```
 
+
+
 ### Rotating demo:
 
 Simple animation with frames generated in realtime:
@@ -82,25 +98,44 @@ Simple animation with frames generated in realtime:
 python rotating.py
 ```
 
+
+
 ### Screencap demo:
 
-Captures an area of your screen and renders it in the kraken elit lcd
+Captures an area of your screen and renders it in the kraken elite lcd
 
 ```
 python screencap.py
 ```
 
-### Signalrgb demo:
 
-Receives a canvas section from signalRGB, adds temperature infos and display it on the device
+
+### SignalRGB bridge:
+
+Receives a canvas section from SignalRGB, optionally composes MONITOR / OVERLAY / GIF, and displays it on the device
 
 ```
 python signalrgb.py
 ```
 
+Or run the packaged `SignalRGBLCDBridge.exe` (systray, no console).
+
+In SignalRGB, device **FPS** is under Settings; composition mode, orientation, editor URLs, and overlay knobs are under **Lighting**:
+
+
+| Mode        | Behavior                                                    |
+| ----------- | ----------------------------------------------------------- |
+| **OFF**     | Canvas path without squid HUD/GIF composition               |
+| **OVERLAY** | Classic canvas + liquid / spinner-style overlay             |
+| **MONITOR** | Multi-widget HUD — edit at `http://127.0.0.1:30003/monitor` |
+| **GIF**     | GIF with pan/zoom — edit at `http://127.0.0.1:30003/gif`    |
+
+
+Tray menu: device status, bridge FPS, Monitor editor, GIF editor, Exit.
+
 ## Images
 
-Remote desktop icons created by fzyn - Flaticon https://www.flaticon.com/free-icons/remote-desktop"
+Remote desktop icons created by fzyn - Flaticon [https://www.flaticon.com/free-icons/remote-desktop](https://www.flaticon.com/free-icons/remote-desktop)  
 Kraken device images taken from NZXT website
 
 ## License

@@ -168,3 +168,14 @@ last_gif.source.gif
 last_gif.json
 test/
 output/
+# Local probe scratch
+scripts/_wrap_*.py
+scripts/_run_*.py
+scripts/*_now.txt
+scripts/mahm_*.txt
+scripts/rtss_session1.txt
+scripts/sources_now.txt
+
+# Local agent / planning notes (keep on disk, not in git)
+AGENTS.md
+plan.md
